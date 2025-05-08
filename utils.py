@@ -85,7 +85,37 @@ def extract_zip_file(zip_path):
         logging.error(f"ZIP 파일 처리 오류: {str(e)}")
         return []
 
-# 데이터 로드 함수
+# 텍스트 전처리 함수
+def preprocess_text(text):
+    """텍스트 정규화 및 전처리"""
+    if not text or not isinstance(text, str):
+        return ""
+    # 공백 정규화 및 특수문자 처리
+    text = re.sub(r'\s+', ' ', text)  # 여러 공백을 하나로
+    text = text.strip()  # 앞뒤 공백 제거
+    return text
+
+# 데이터에서 텍스트 추출 함수
+def extract_text_from_item(item, data_type):
+    """데이터 아이템에서 검색에 사용할 텍스트 추출"""
+    if data_type == "court_case":
+        # 판례 데이터에서 텍스트 추출
+        text_parts = []
+        for key in ['사건번호', '선고일자\n(종결일자)', '판결주문', '청구취지', '판결이유']:
+            if key in item and item[key]:
+                sub_text = f'{key}: {item[key]} \n\n'
+                text_parts.append(sub_text)
+        return ' '.join(text_parts)
+    else:  # tax_case
+        # 조세심판 결정례에서 텍스트 추출
+        text_parts = []
+        for key in ['[청구번호]', '[제 목]', '[결정요지]', "[주    문]", "[이    유]"]:
+            if key in item and item[key]:
+                sub_text = f'{key}: {item[key]} \n\n'
+                text_parts.append(sub_text)
+        return ' '.join(text_parts)
+
+# 데이터 로드 함수 - 초기화 시 1번만 호출
 @st.cache_data
 def load_data():
     """판례 및 조세심판 결정례 데이터 로드"""
@@ -103,18 +133,68 @@ def load_data():
             st.sidebar.error("조세심판결정례 데이터를 로드할 수 없습니다.")
             tax_cases = []
         
+        # 데이터 전처리 및 벡터화 
+        preprocessed_data = preprocess_data(court_cases, tax_cases)
+        return court_cases, tax_cases, preprocessed_data
+        
     except FileNotFoundError as e:
         st.sidebar.error(f"파일을 찾을 수 없습니다: {e}")
         st.error("필수 데이터 파일을 찾을 수 없습니다. 애플리케이션 디렉토리에 필요한 파일이 있는지 확인하세요.")
-        court_cases = []
-        tax_cases = []
+        return [], [], {}
     except json.JSONDecodeError as e:
         st.sidebar.error(f"JSON 파일 파싱 오류: {e}")
         st.error("JSON 파일 형식이 올바르지 않습니다. 파일 형식을 확인하세요.")
-        court_cases = []
-        tax_cases = []
+        return [], [], {}
+
+# 새로운 함수: 데이터 전처리 및 벡터화 (최초 1회만 실행)
+def preprocess_data(court_cases, tax_cases):
+    """데이터 전처리 및 벡터화 - 검색에 필요한 모든 정보를 미리 준비"""
+    result = {
+        "court_corpus": [],
+        "tax_corpus": [],
+        "court_vectorizer": None,
+        "court_tfidf_matrix": None,
+        "tax_chunks": [],
+        "tax_vectorizers": [],
+        "tax_tfidf_matrices": []
+    }
     
-    return court_cases, tax_cases
+    # 1. 판례 데이터 전처리
+    court_corpus = []
+    for item in court_cases:
+        text = extract_text_from_item(item, "court_case")
+        court_corpus.append(preprocess_text(text))
+    
+    result["court_corpus"] = court_corpus
+    
+    # 2. 판례 데이터 벡터화
+    if court_corpus:
+        court_vectorizer = TfidfVectorizer()
+        court_tfidf_matrix = court_vectorizer.fit_transform(court_corpus)
+        result["court_vectorizer"] = court_vectorizer
+        result["court_tfidf_matrix"] = court_tfidf_matrix
+    
+    # 3. 조세심판 결정례 데이터 분할
+    tax_chunks = split_tax_cases(tax_cases)
+    result["tax_chunks"] = tax_chunks
+    
+    # 4. 각 조세심판 결정례 청크별 전처리 및 벡터화
+    for chunk in tax_chunks:
+        tax_corpus = []
+        for item in chunk:
+            text = extract_text_from_item(item, "tax_case")
+            tax_corpus.append(preprocess_text(text))
+        
+        result["tax_corpus"].append(tax_corpus)
+        
+        if tax_corpus:
+            tax_vectorizer = TfidfVectorizer()
+            tax_tfidf_matrix = tax_vectorizer.fit_transform(tax_corpus)
+            result["tax_vectorizers"].append(tax_vectorizer)
+            result["tax_tfidf_matrices"].append(tax_tfidf_matrix)
+    
+    logging.info("데이터 전처리 및 벡터화 완료")
+    return result
 
 def split_tax_cases(tax_cases):
     """조세심판결정례를 4개의 청크로 분할"""
@@ -133,6 +213,50 @@ def split_tax_cases(tax_cases):
     st.sidebar.info(f"조세심판결정례 분할: 총 {total_cases}건을 {[len(chunk) for chunk in chunks]}건씩 배분")
     
     return chunks
+
+# 관련성 높은 데이터 검색 함수 - 최적화 버전
+def search_relevant_data(data, query, data_type, preprocessed_data, chunk_idx=None, top_n=15, conversation_history=""):
+    """질문과 관련성이 높은 데이터 항목을 검색 (미리 벡터화된 데이터 활용)"""
+    if not data:
+        return []
+
+    # 쿼리 전처리
+    enhanced_query = query
+    if conversation_history:
+        enhanced_query = f"{query} {conversation_history}"
+    
+    enhanced_query = preprocess_text(enhanced_query)
+    
+    try:
+        if data_type == "court_case":
+            # 판례 데이터 검색
+            vectorizer = preprocessed_data["court_vectorizer"]
+            tfidf_matrix = preprocessed_data["court_tfidf_matrix"]
+        else:  # tax_case
+            # 조세심판 결정례 검색 (특정 청크)
+            vectorizer = preprocessed_data["tax_vectorizers"][chunk_idx]
+            tfidf_matrix = preprocessed_data["tax_tfidf_matrices"][chunk_idx]
+        
+        # 쿼리 벡터화
+        query_vec = vectorizer.transform([enhanced_query])
+        
+        # 코사인 유사도 계산
+        similarities = cosine_similarity(query_vec, tfidf_matrix)[0]
+        
+        # 유사도 기준으로 상위 n개 항목 선택
+        top_indices = similarities.argsort()[-top_n:][::-1]
+        
+        # 유사도가 0보다 큰 항목만 선택
+        relevant_data = []
+        for idx in top_indices:
+            if similarities[idx] > 0:
+                relevant_data.append(data[idx])
+        
+        return relevant_data
+    except Exception as e:
+        logging.error(f"검색 오류: {str(e)}")
+        # 오류 발생 시 원본 데이터의 일부 반환
+        return data[:min(top_n, len(data))]
 
 # 에이전트 프롬프트 정의
 def get_agent_prompt(agent_type):
@@ -168,90 +292,18 @@ def get_agent_prompt(agent_type):
 - 이전 대화에서 언급된 내용이 있다면 그것을 기억하고 관련 내용을 참조하여 응답합니다.
 """
 
-# 텍스트 전처리 함수
-def preprocess_text(text):
-    """텍스트 정규화 및 전처리"""
-    if not text or not isinstance(text, str):
-        return ""
-    # 공백 정규화 및 특수문자 처리
-    text = re.sub(r'\s+', ' ', text)  # 여러 공백을 하나로
-    text = text.strip()  # 앞뒤 공백 제거
-    return text
-
-# 데이터에서 텍스트 추출 함수
-def extract_text_from_item(item, data_type):
-    """데이터 아이템에서 검색에 사용할 텍스트 추출"""
-    if data_type == "court_case":
-        # 판례 데이터에서 텍스트 추출
-        text_parts = []
-        for key in ['사건번호', '선고일자\n(종결일자)', '판결주문', '청구취지', '판결이유']:
-            if key in item and item[key]:
-                sub_text = f'{key}: {item[key]} \n\n'
-                text_parts.append(sub_text)
-        return ' '.join(text_parts)
-    else:  # tax_case
-        # 조세심판 결정례에서 텍스트 추출
-        text_parts = []
-        for key in ['[청구번호]', '[제 목]', '[결정요지]', "[주    문]", "[이    유]"]:
-            if key in item and item[key]:
-                sub_text = f'{key}: {item[key]} \n\n'
-                text_parts.append(sub_text)
-        return ' '.join(text_parts)
-
-# 관련성 높은 데이터 검색 함수
-def search_relevant_data(data, query, data_type, top_n=15, conversation_history=""):
-    """질문과 관련성이 높은 데이터 항목을 검색"""
-    if not data:
-        return []
-    
-    # 데이터에서 텍스트 추출
-    corpus = []
-    for item in data:
-        text = extract_text_from_item(item, data_type)
-        corpus.append(preprocess_text(text))
-    
-    # 쿼리 전처리 - 대화 기록과 함께 활용
-    enhanced_query = query
-    if conversation_history:
-        # 최근 대화에서 관련 키워드 추출 (간단한 구현)
-        # 실제 구현에서는 더 정교한 키워드 추출 알고리즘 사용 가능
-        enhanced_query = f"{query} {conversation_history}"
-    
-    enhanced_query = preprocess_text(enhanced_query)
-    
-    # TF-IDF 벡터화
-    vectorizer = TfidfVectorizer()
-    try:
-        tfidf_matrix = vectorizer.fit_transform(corpus)
-        query_vec = vectorizer.transform([enhanced_query])
-        
-        # 코사인 유사도 계산
-        similarities = cosine_similarity(query_vec, tfidf_matrix)[0]
-        
-        # 유사도 기준으로 상위 n개 항목 선택
-        top_indices = similarities.argsort()[-top_n:][::-1]
-        
-        # 유사도가 0보다 큰 항목만 선택
-        relevant_data = []
-        for idx in top_indices:
-            if similarities[idx] > 0:
-                relevant_data.append(data[idx])
-        
-        return relevant_data
-    except Exception as e:
-        logging.error(f"검색 오류: {str(e)}")
-        # 오류 발생 시 원본 데이터의 일부 반환
-        return data[:min(top_n, len(data))]
-
-# 에이전트 실행 함수
-def run_agent(agent_type, data, user_query, agent_index=None, conversation_history=""):
-    """특정 유형의 에이전트 실행"""
+# 에이전트 실행 함수 - 최적화 버전
+def run_agent(agent_type, data, user_query, preprocessed_data, agent_index=None, chunk_idx=None, conversation_history=""):
+    """특정 유형의 에이전트 실행 (최적화된 데이터 사용)"""
     # 프롬프트 생성
     prompt = get_agent_prompt(agent_type)
     
-    # 질문과 관련성이 높은 데이터 검색 (대화 기록 활용)
+    # 질문과 관련성이 높은 데이터 검색 (미리 처리된 데이터 활용)
     data_type = "court_case" if agent_type == "court_case" else "tax_case"
-    relevant_data = search_relevant_data(data, user_query, data_type, conversation_history=conversation_history)
+    relevant_data = search_relevant_data(
+        data, user_query, data_type, preprocessed_data, 
+        chunk_idx=chunk_idx, conversation_history=conversation_history
+    )
     
     # 관련 데이터가 없는 경우 처리
     if not relevant_data:
@@ -281,7 +333,7 @@ def run_agent(agent_type, data, user_query, agent_index=None, conversation_histo
             "temperature": 0.2,  # 낮은 온도로 일관된 응답 생성
             "top_k": 40,
             "top_p": 0.95,
-            "max_output_tokens": 1024,  # 더 긴 응답 가능하도록 설정
+            # "max_output_tokens": 1024,  # 더 긴 응답 가능하도록 설정
         }
         response = model.generate_content(
             full_prompt,
@@ -302,27 +354,31 @@ def run_agent(agent_type, data, user_query, agent_index=None, conversation_histo
             "response": error_msg
         }
 
-# 병렬 에이전트 실행
-def run_parallel_agents(court_cases, tax_cases, user_query, conversation_history=""):
-    """모든 에이전트를 병렬로 실행하고 결과 반환"""
+# 병렬 에이전트 실행 - 최적화 버전
+def run_parallel_agents(court_cases, tax_cases, preprocessed_data, user_query, conversation_history=""):
+    """모든 에이전트를 병렬로 실행하고 결과 반환 (최적화 버전)"""
     results = []
     
     try:
-        # 조세심판 결정례 데이터를 4개로 분할
-        tax_cases_chunks = split_tax_cases(tax_cases)
+        # 미리 분할된 조세심판 결정례 데이터 활용
+        tax_cases_chunks = preprocessed_data["tax_chunks"]
         
         # ThreadPoolExecutor로 병렬 처리
         with ThreadPoolExecutor(max_workers=5) as executor:
             # Agent 1: 판례 검색
             court_agent_future = executor.submit(
-                run_agent, "court_case", court_cases, user_query, 1, conversation_history
+                run_agent, "court_case", court_cases, user_query, 
+                preprocessed_data, 1, None, conversation_history
             )
             
             # Agent 2-5: 조세심판 결정례 검색 (데이터 분할 필요)
             tax_agent_futures = []
             for i, chunk in enumerate(tax_cases_chunks, start=2):
                 tax_agent_futures.append(
-                    executor.submit(run_agent, "tax_case", chunk, user_query, i, conversation_history)
+                    executor.submit(
+                        run_agent, "tax_case", chunk, user_query, 
+                        preprocessed_data, i, i-2, conversation_history
+                    )
                 )
             
             # 결과 수집
@@ -363,7 +419,7 @@ def run_head_agent(agent_responses, user_query, conversation_history=""):
             "temperature": 0.2,  # 낮은 온도로 일관된 응답 생성
             "top_k": 40,
             "top_p": 0.95,
-            "max_output_tokens": 1024,  # 더 긴 응답 가능하도록 설정
+            # "max_output_tokens": 1024,  # 더 긴 응답 가능하도록 설정
         }
         response = model.generate_content(
             full_prompt,

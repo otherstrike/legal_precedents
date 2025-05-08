@@ -41,6 +41,14 @@ if "processing" not in st.session_state:
 if "context_enabled" not in st.session_state:
     st.session_state.context_enabled = True
 
+# 데이터 저장을 위한 세션 상태 설정
+if "loaded_data" not in st.session_state:
+    st.session_state.loaded_data = {
+        "court_cases": [],
+        "tax_cases": [],
+        "preprocessed_data": {}
+    }
+
 # 사이드바에 API 키 입력 폼
 with st.sidebar:
     st.header("설정")
@@ -84,6 +92,17 @@ with st.sidebar:
 has_data_files = check_data_files()
 if not has_data_files:
     st.warning("일부 데이터 파일이 없습니다. 예시 데이터를 사용하거나 필요한 파일을 추가해주세요.")
+else:
+    # 데이터가 아직 로드되지 않았다면 로드
+    if not st.session_state.loaded_data["court_cases"]:
+        with st.spinner("데이터를 로드하고 전처리 중입니다..."):
+            court_cases, tax_cases, preprocessed_data = load_data()
+            st.session_state.loaded_data = {
+                "court_cases": court_cases,
+                "tax_cases": tax_cases,
+                "preprocessed_data": preprocessed_data
+            }
+            st.success("데이터 로드 및 전처리가 완료되었습니다.")
 
 # 저장된 메시지 표시
 for message in st.session_state.messages:
@@ -107,8 +126,10 @@ if prompt := st.chat_input("질문을 입력하세요..."):
         with st.chat_message("assistant"):
             with st.spinner("답변 생성 중..."):
                 try:
-                    # 데이터 로드
-                    court_cases, tax_cases = load_data()
+                    # 저장된 데이터 사용
+                    court_cases = st.session_state.loaded_data["court_cases"]
+                    tax_cases = st.session_state.loaded_data["tax_cases"]
+                    preprocessed_data = st.session_state.loaded_data["preprocessed_data"]
                     
                     # 대화 맥락 가져오기
                     conversation_history = ""
@@ -128,9 +149,9 @@ if prompt := st.chat_input("질문을 입력하세요..."):
                     progress_text.text("1/3 에이전트 실행 중...")
                     progress_bar.progress(33)
                     
-                    # 에이전트 실행 (대화 기록 전달)
+                    # 에이전트 실행 (대화 기록 전달 및 전처리된 데이터 활용)
                     agent_responses = run_parallel_agents(
-                        court_cases, tax_cases, prompt, conversation_history
+                        court_cases, tax_cases, preprocessed_data, prompt, conversation_history
                     )
                     
                     progress_text.text("2/3 결과 통합 중...")

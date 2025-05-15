@@ -24,7 +24,7 @@ st.set_page_config(
 
 # 애플리케이션 제목
 st.title("⚖️ 관세법 판례 기반 챗봇")
-st.markdown("관세법 판례 및 조세심판 결정례 정보를 활용한 AI 기반 법률 챗봇입니다.")
+st.markdown("관세법 판례 정보를 활용한 AI 기반 법률 챗봇입니다.")
 
 # API 키 설정
 if 'api_key_set' not in st.session_state:
@@ -199,9 +199,9 @@ with st.sidebar:
     
     st.subheader("프로젝트 정보")
     st.markdown("""
-    이 챗봇은 관세법 판례와 조세심판 결정례를 기반으로 답변을 생성합니다.
-    - 6개의 AI 에이전트 활용
+    이 챗봇은 관세분야야 판례를 기반으로 답변을 생성합니다.
+    - 7개의 AI 에이전트 활용
     - Google Gemini 2.0 Flash 모델 사용
-    - 질문과 관련성이 높은 판례/결정례 검색 기능
+    - 질문과 관련성이 높은 판례 검색 기능
     - 관련 자료 기반 정확한 응답 생성
     """)

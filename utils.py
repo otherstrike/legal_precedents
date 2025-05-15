@@ -47,7 +47,7 @@ def get_conversation_history(max_messages=10):
 def check_data_files():
     """필요한 데이터 파일 존재 여부 확인"""
     court_file = "관세분야판례423개.json"
-    tax_file = "조세심판결정례_final.zip"
+    tax_file = "국가법령정보센터_관세판례.json"
     
     files_exist = True
     if not os.path.exists(court_file):
@@ -106,32 +106,45 @@ def extract_text_from_item(item, data_type):
                 sub_text = f'{key}: {item[key]} \n\n'
                 text_parts.append(sub_text)
         return ' '.join(text_parts)
-    else:  # tax_case
-        # 조세심판 결정례에서 텍스트 추출
+    else:  # 국가법령정보센터_관세판례
+        # 국가법령정보센터_관세판례에서 텍스트 추출
         text_parts = []
-        for key in ['[청구번호]', '[제 목]', '[결정요지]', "[주    문]", "[이    유]"]:
+        for key in ['제목', '판례번호', '내용']:
             if key in item and item[key]:
                 sub_text = f'{key}: {item[key]} \n\n'
                 text_parts.append(sub_text)
         return ' '.join(text_parts)
+    # else:  # tax_case
+    #     # 조세심판 결정례에서 텍스트 추출
+    #     text_parts = []
+    #     for key in ['[청구번호]', '[제 목]', '[결정요지]', "[주    문]", "[이    유]"]:
+    #         if key in item and item[key]:
+    #             sub_text = f'{key}: {item[key]} \n\n'
+    #             text_parts.append(sub_text)
+    #     return ' '.join(text_parts)
 
 # 데이터 로드 함수 - 초기화 시 1번만 호출
 @st.cache_data
 def load_data():
-    """판례 및 조세심판 결정례 데이터 로드"""
+    """판례 데이터 로드"""
     try:
-        # 판례 데이터 로드
+        # 판례 데이터 로드1
         with open("관세분야판례423개.json", "r", encoding="utf-8") as f:
             court_cases = json.load(f)
         st.sidebar.success(f"판례 데이터 로드 완료: {len(court_cases)}건")
+
+        # 판례 데이터 로드2
+        with open("국가법령정보센터_관세판례.json", "r", encoding="utf-8") as f:
+            tax_cases = json.load(f)
+        st.sidebar.success(f"판례 데이터 로드 완료: {len(tax_cases)}건")
         
-        # 조세심판 결정례 로드 (ZIP 파일)
-        tax_cases = extract_zip_file("조세심판결정례_final.zip")
-        if tax_cases:
-            st.sidebar.success(f"조세심판결정례 데이터 로드 완료: {len(tax_cases)}건")
-        else:
-            st.sidebar.error("조세심판결정례 데이터를 로드할 수 없습니다.")
-            tax_cases = []
+        # # 조세심판 결정례 로드 (ZIP 파일)
+        # tax_cases = extract_zip_file("조세심판결정례_final.zip")
+        # if tax_cases:
+        #     st.sidebar.success(f"조세심판결정례 데이터 로드 완료: {len(tax_cases)}건")
+        # else:
+        #     st.sidebar.error("조세심판결정례 데이터를 로드할 수 없습니다.")
+        #     tax_cases = []
         
         # 데이터 전처리 및 벡터화 
         preprocessed_data = preprocess_data(court_cases, tax_cases)
@@ -152,33 +165,38 @@ def preprocess_data(court_cases, tax_cases):
     result = {
         "court_corpus": [],
         "tax_corpus": [],
-        "court_vectorizer": None,
-        "court_tfidf_matrix": None,
+        "court_chunks": [],
+        "court_vectorizers": [],
+        "court_tfidf_matrices": [],
         "tax_chunks": [],
         "tax_vectorizers": [],
         "tax_tfidf_matrices": []
     }
     
-    # 1. 판례 데이터 전처리
-    court_corpus = []
-    for item in court_cases:
-        text = extract_text_from_item(item, "court_case")
-        court_corpus.append(preprocess_text(text))
+    # 1. 판례 데이터 분할 및 전처리
+    court_chunks = split_court_cases(court_cases)
+    result["court_chunks"] = court_chunks
     
-    result["court_corpus"] = court_corpus
+    # 2. 각 판례 데이터 청크별 전처리 및 벡터화
+    for chunk in court_chunks:
+        court_corpus = []
+        for item in chunk:
+            text = extract_text_from_item(item, "court_case")
+            court_corpus.append(preprocess_text(text))
+        
+        result["court_corpus"].append(court_corpus)
+        
+        if court_corpus:
+            court_vectorizer = TfidfVectorizer()
+            court_tfidf_matrix = court_vectorizer.fit_transform(court_corpus)
+            result["court_vectorizers"].append(court_vectorizer)
+            result["court_tfidf_matrices"].append(court_tfidf_matrix)
     
-    # 2. 판례 데이터 벡터화
-    if court_corpus:
-        court_vectorizer = TfidfVectorizer()
-        court_tfidf_matrix = court_vectorizer.fit_transform(court_corpus)
-        result["court_vectorizer"] = court_vectorizer
-        result["court_tfidf_matrix"] = court_tfidf_matrix
-    
-    # 3. 조세심판 결정례 데이터 분할
+    # 3. 국가법령정보센터 관세판례 데이터 분할
     tax_chunks = split_tax_cases(tax_cases)
     result["tax_chunks"] = tax_chunks
     
-    # 4. 각 조세심판 결정례 청크별 전처리 및 벡터화
+    # 4. 각 국가법령정보센터 관세판례 청크별 전처리 및 벡터화
     for chunk in tax_chunks:
         tax_corpus = []
         for item in chunk:
@@ -196,8 +214,27 @@ def preprocess_data(court_cases, tax_cases):
     logging.info("데이터 전처리 및 벡터화 완료")
     return result
 
+# 추가된 함수: 법원 판례 데이터를 2개의 청크로 분할
+def split_court_cases(court_cases):
+    """관세분야판례423개를 2개의 청크로 분할"""
+    # 데이터 개수
+    total_cases = len(court_cases)
+    chunk_size = max(1, total_cases // 2)  # 최소 1개는 되도록
+    
+    # 2개의 청크로 분할
+    chunks = []
+    for i in range(2):
+        start_idx = i * chunk_size
+        end_idx = (i + 1) * chunk_size if i < 1 else total_cases
+        chunks.append(court_cases[start_idx:end_idx])
+    
+    # 분할 정보 로그
+    st.sidebar.info(f"관세분야판례 분할: 총 {total_cases}건을 {[len(chunk) for chunk in chunks]}건씩 배분")
+    
+    return chunks
+
 def split_tax_cases(tax_cases):
-    """조세심판결정례를 4개의 청크로 분할"""
+    """국가법령정보센터_관세판례를 4개의 청크로 분할"""
     # 데이터 개수
     total_cases = len(tax_cases)
     chunk_size = max(1, total_cases // 4)  # 최소 1개는 되도록
@@ -210,7 +247,7 @@ def split_tax_cases(tax_cases):
         chunks.append(tax_cases[start_idx:end_idx])
     
     # 분할 정보 로그
-    st.sidebar.info(f"조세심판결정례 분할: 총 {total_cases}건을 {[len(chunk) for chunk in chunks]}건씩 배분")
+    st.sidebar.info(f"국가법령정보센터 판례 분할: 총 {total_cases}건을 {[len(chunk) for chunk in chunks]}건씩 배분")
     
     return chunks
 
@@ -229,11 +266,11 @@ def search_relevant_data(data, query, data_type, preprocessed_data, chunk_idx=No
     
     try:
         if data_type == "court_case":
-            # 판례 데이터 검색
-            vectorizer = preprocessed_data["court_vectorizer"]
-            tfidf_matrix = preprocessed_data["court_tfidf_matrix"]
+            # 판례 데이터 검색 (특정 청크)
+            vectorizer = preprocessed_data["court_vectorizers"][chunk_idx]
+            tfidf_matrix = preprocessed_data["court_tfidf_matrices"][chunk_idx]
         else:  # tax_case
-            # 조세심판 결정례 검색 (특정 청크)
+            # 국가법령정보센터 관세판례 검색 (특정 청크)
             vectorizer = preprocessed_data["tax_vectorizers"][chunk_idx]
             tfidf_matrix = preprocessed_data["tax_tfidf_matrices"][chunk_idx]
         
@@ -274,9 +311,9 @@ def get_agent_prompt(agent_type):
 - 모든 답변은 두괄식으로 작성합니다.
 """
     if agent_type == "court_case":
-        return base_prompt + "\n# 판례 데이터를 기반으로 응답하세요."
+        return base_prompt + "\n# 판례 데이터를 기반으로 응답하세요. 모르면 모른다고 하세요."
     elif agent_type == "tax_case":
-        return base_prompt + "\n# 조세심판 결정례 데이터를 기반으로 응답하세요."
+        return base_prompt + "\n# 판례례 데이터를 기반으로 응답하세요. 모르면 모른다고 하세요."
     else:  # head agent
         return """
 # Role
@@ -360,29 +397,35 @@ def run_parallel_agents(court_cases, tax_cases, preprocessed_data, user_query, c
     results = []
     
     try:
-        # 미리 분할된 조세심판 결정례 데이터 활용
+        # 미리 분할된 데이터 활용
+        court_cases_chunks = preprocessed_data["court_chunks"]
         tax_cases_chunks = preprocessed_data["tax_chunks"]
         
         # ThreadPoolExecutor로 병렬 처리
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            # Agent 1: 판례 검색
-            court_agent_future = executor.submit(
-                run_agent, "court_case", court_cases, user_query, 
-                preprocessed_data, 1, None, conversation_history
-            )
+        with ThreadPoolExecutor(max_workers=6) as executor:  # 에이전트 수 증가로 max_workers 조정
+            # Agent 1-2: 판례 검색 (2개 청크)
+            court_agent_futures = []
+            for i, chunk in enumerate(court_cases_chunks, start=1):
+                court_agent_futures.append(
+                    executor.submit(
+                        run_agent, "court_case", chunk, user_query, 
+                        preprocessed_data, i, i-1, conversation_history
+                    )
+                )
             
-            # Agent 2-5: 조세심판 결정례 검색 (데이터 분할 필요)
+            # Agent 3-6: 국가법령정보센터 관세판례 검색 (4개 청크)
             tax_agent_futures = []
-            for i, chunk in enumerate(tax_cases_chunks, start=2):
+            for i, chunk in enumerate(tax_cases_chunks, start=3):
                 tax_agent_futures.append(
                     executor.submit(
                         run_agent, "tax_case", chunk, user_query, 
-                        preprocessed_data, i, i-2, conversation_history
+                        preprocessed_data, i, i-3, conversation_history
                     )
                 )
             
             # 결과 수집
-            results.append(court_agent_future.result())
+            for future in court_agent_futures:
+                results.append(future.result())
             for future in tax_agent_futures:
                 results.append(future.result())
     except Exception as e:

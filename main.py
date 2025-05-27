@@ -137,9 +137,6 @@ if prompt := st.chat_input("질문을 입력하세요..."):
                         conversation_history = get_conversation_history(
                             max_messages=st.session_state.get('max_history', 5)
                         )
-                        
-                        # 디버깅용 (개발 시에만 사용)
-                        # st.sidebar.info(f"활용 대화 기록:\n{conversation_history}")
                     
                     # 프로그레스 바 표시
                     progress_text = st.empty()
@@ -158,9 +155,19 @@ if prompt := st.chat_input("질문을 입력하세요..."):
                     progress_bar.progress(66)
                     
                     # Head Agent로 최종 응답 생성 (대화 기록 전달)
-                    final_response = run_head_agent(
+                    
+                    head_response = run_head_agent(
                         agent_responses, prompt, conversation_history
                     )
+                    
+                    # 응답 텍스트 추출 (수정된 함수 반환값에 맞춤)
+                    if isinstance(head_response, dict):
+                        final_response = head_response.get("response", "응답을 생성할 수 없습니다.")
+                        already_displayed = head_response.get("already_displayed", False)
+                    else:
+                        # 이전 버전 호환성을 위한 처리
+                        final_response = head_response
+                        already_displayed = False
                     
                     progress_text.text("3/3 답변 생성 완료")
                     progress_bar.progress(100)
@@ -170,8 +177,9 @@ if prompt := st.chat_input("질문을 입력하세요..."):
                     progress_text.empty()
                     progress_bar.empty()
                     
-                    # 최종 응답 표시
-                    st.markdown(final_response)
+                    # 이미 스트리밍으로 표시되지 않은 경우에만 최종 응답 표시
+                    if not already_displayed:
+                        st.markdown(final_response)
                     
                     # 응답 저장
                     st.session_state.messages.append({"role": "assistant", "content": final_response})
@@ -188,20 +196,12 @@ if prompt := st.chat_input("질문을 입력하세요..."):
 
 # 사이드바에 사용 예시 및 정보 추가
 with st.sidebar:
-    # st.subheader("사용 예시")
-    # st.markdown("""
-    # 다음과 같은 질문을 시도해보세요:
-    # - 관세경정거부처분이란 무엇인가요?
-    # - HSK 분류와 관련된 주요 판례는?
-    # - 품목분류 관련 주요 법적 쟁점은?
-    # - 관세법 제42조의 가산세 면제 조건은?
-    # - (이전 질문에 이어서) 그럼 가산세 면제 사례는?""")
-    
     st.subheader("프로젝트 정보")
     st.markdown("""
     이 챗봇은 관세분야야 판례를 기반으로 답변을 생성합니다.
     - 7개의 AI 에이전트 활용
-    - Google Gemini 2.0 Flash 모델 사용
+    - 일반 agent : Google Gemini 2.0 Flash 모델 사용
+    - Head agent : Google Gemini 2.5 Flash 모델 사용
     - 질문과 관련성이 높은 판례 검색 기능
     - 관련 자료 기반 정확한 응답 생성
     """)

@@ -457,7 +457,7 @@ def run_head_agent(agent_responses, user_query, conversation_history=""):
     
     try:
         # Gemini 모델 호출
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash-preview-05-20')
         generation_config = {
             "temperature": 0.2,  # 낮은 온도로 일관된 응답 생성
             "top_k": 40,

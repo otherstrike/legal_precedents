@@ -9,19 +9,12 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import zipfile
 import tempfile
+from dotenv import load_dotenv
 
-# Gemini API 초기화 함수
-def initialize_gemini_api(api_key):
-    """Google Gemini API 초기화 함수"""
-    try:
-        genai.configure(api_key=api_key)
-        # 간단한 API 테스트
-        model = genai.GenerativeModel('gemini-2.0-flash')
-        response = model.generate_content("Test")
-        return True
-    except Exception as e:
-        st.error(f"API 초기화 오류: {str(e)}")
-        return False
+# --- 환경 변수 및 Gemini API 설정 ---
+load_dotenv()
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+genai.configure(api_key=GOOGLE_API_KEY)
 
 # 대화 기록 관리 함수
 def get_conversation_history(max_messages=10):
@@ -114,14 +107,7 @@ def extract_text_from_item(item, data_type):
                 sub_text = f'{key}: {item[key]} \n\n'
                 text_parts.append(sub_text)
         return ' '.join(text_parts)
-    # else:  # tax_case
-    #     # 조세심판 결정례에서 텍스트 추출
-    #     text_parts = []
-    #     for key in ['[청구번호]', '[제 목]', '[결정요지]', "[주    문]", "[이    유]"]:
-    #         if key in item and item[key]:
-    #             sub_text = f'{key}: {item[key]} \n\n'
-    #             text_parts.append(sub_text)
-    #     return ' '.join(text_parts)
+    
 
 # 데이터 로드 함수 - 초기화 시 1번만 호출
 @st.cache_data
@@ -137,14 +123,6 @@ def load_data():
         with open("국가법령정보센터_관세판례.json", "r", encoding="utf-8") as f:
             tax_cases = json.load(f)
         st.sidebar.success(f"판례 데이터 로드 완료: {len(tax_cases)}건")
-        
-        # # 조세심판 결정례 로드 (ZIP 파일)
-        # tax_cases = extract_zip_file("조세심판결정례_final.zip")
-        # if tax_cases:
-        #     st.sidebar.success(f"조세심판결정례 데이터 로드 완료: {len(tax_cases)}건")
-        # else:
-        #     st.sidebar.error("조세심판결정례 데이터를 로드할 수 없습니다.")
-        #     tax_cases = []
         
         # 데이터 전처리 및 벡터화 
         preprocessed_data = preprocess_data(court_cases, tax_cases)
@@ -176,6 +154,19 @@ def preprocess_data(court_cases, tax_cases):
     # 1. 판례 데이터 분할 및 전처리
     court_chunks = split_court_cases(court_cases)
     result["court_chunks"] = court_chunks
+
+    # 불용어 정의
+    LEGAL_STOPWORDS = [
+        # 기본 불용어
+        '것', '등', '때', '경우', '바', '수', '점', '면', '이', '그', '저', '은', '는', '을', '를', '에', '의', '으로', 
+        '따라', '또는', '및', '있다', '한다', '되어', '인한', '대한', '관한', '위한', '통한', '같은', '다른',
+        
+        # 법령 구조 불용어
+        '조항', '규정', '법률', '법령', '조문', '항목', '세부', '내용', '사항', '요건', '기준', '방법', '절차',
+        
+        # 일반적인 동사/형용사
+        '해당', '관련', '포함', '제외', '적용', '시행', '준용', '의하다', '하다', '되다', '있다', '없다', '같다'
+    ]
     
     # 2. 각 판례 데이터 청크별 전처리 및 벡터화
     for chunk in court_chunks:
@@ -187,7 +178,16 @@ def preprocess_data(court_cases, tax_cases):
         result["court_corpus"].append(court_corpus)
         
         if court_corpus:
-            court_vectorizer = TfidfVectorizer()
+            court_vectorizer = TfidfVectorizer(
+                ngram_range=(1, 2),
+                stop_words=LEGAL_STOPWORDS,
+                min_df=1,
+                max_df=0.8,
+                sublinear_tf=True,
+                use_idf=True,
+                smooth_idf=True,
+                norm='l2'
+            )
             court_tfidf_matrix = court_vectorizer.fit_transform(court_corpus)
             result["court_vectorizers"].append(court_vectorizer)
             result["court_tfidf_matrices"].append(court_tfidf_matrix)
@@ -252,7 +252,7 @@ def split_tax_cases(tax_cases):
     return chunks
 
 # 관련성 높은 데이터 검색 함수 - 최적화 버전
-def search_relevant_data(data, query, data_type, preprocessed_data, chunk_idx=None, top_n=15, conversation_history=""):
+def search_relevant_data(data, query, data_type, preprocessed_data, chunk_idx=None, top_n=10, conversation_history=""):
     """질문과 관련성이 높은 데이터 항목을 검색 (미리 벡터화된 데이터 활용)"""
     if not data:
         return []
@@ -457,7 +457,7 @@ def run_head_agent(agent_responses, user_query, conversation_history=""):
     
     try:
         # Gemini 모델 호출
-        model = genai.GenerativeModel('gemini-2.5-flash-preview-05-20')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         generation_config = {
             "temperature": 0.2,  # 낮은 온도로 일관된 응답 생성
             "top_k": 40,

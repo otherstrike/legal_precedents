@@ -1,7 +1,6 @@
 import streamlit as st
 import json
 import os
-import google.generativeai as genai
 from concurrent.futures import ThreadPoolExecutor
 import logging
 import re
@@ -14,7 +13,9 @@ from dotenv import load_dotenv
 # --- 환경 변수 및 Gemini API 설정 ---
 load_dotenv()
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
-genai.configure(api_key=GOOGLE_API_KEY)
+from google import genai
+from google.genai import types
+client = genai.Client(api_key=GOOGLE_API_KEY)
 
 # 대화 기록 관리 함수
 def get_conversation_history(max_messages=10):
@@ -313,7 +314,7 @@ def get_agent_prompt(agent_type):
     if agent_type == "court_case":
         return base_prompt + "\n# 판례 데이터를 기반으로 응답하세요. 모르면 모른다고 하세요."
     elif agent_type == "tax_case":
-        return base_prompt + "\n# 판례례 데이터를 기반으로 응답하세요. 모르면 모른다고 하세요."
+        return base_prompt + "\n# 판례 데이터를 기반으로 응답하세요. 모르면 모른다고 하세요."
     else:  # head agent
         return """
 # Role
@@ -364,17 +365,14 @@ def run_agent(agent_type, data, user_query, preprocessed_data, agent_index=None,
     
     try:
         # Gemini 모델 호출 - gemini-2.0-flash 모델 사용
-        model = genai.GenerativeModel('gemini-2.0-flash')
-        # 대화형 응답을 위한 맥락 추가
-        generation_config = {
-            "temperature": 0.2,  # 낮은 온도로 일관된 응답 생성
-            "top_k": 40,
-            "top_p": 0.95,
-            # "max_output_tokens": 1024,  # 더 긴 응답 가능하도록 설정
-        }
-        response = model.generate_content(
-            full_prompt,
-            generation_config=generation_config
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=full_prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.1,
+                top_k=5,
+                top_p=0.8
+            )
         )
         
         agent_label = f"Agent {agent_index}" if agent_index else "Head Agent"
@@ -457,18 +455,23 @@ def run_head_agent(agent_responses, user_query, conversation_history=""):
     
     try:
         # Gemini 모델 호출
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        generation_config = {
-            "temperature": 0.2,  # 낮은 온도로 일관된 응답 생성
-            "top_k": 40,
-            "top_p": 0.95,
-            # "max_output_tokens": 1024,  # 더 긴 응답 가능하도록 설정
-        }
-        response = model.generate_content(
-            full_prompt,
-            generation_config=generation_config
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=full_prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.1,
+                top_k=5,
+                top_p=0.8
+            )
         )
-        return response.text
+        
+        
+        logging.info("Head Agent 응답 생성 완료")
+        return {
+            "agent": "Head Agent",
+            "response": response.text
+        }
+
     except Exception as e:
         error_msg = f"Head Agent 오류 발생: {str(e)}"
         logging.error(error_msg)

@@ -1,7 +1,6 @@
 import streamlit as st
 import os
 import time
-import google.generativeai as genai
 import logging
 from dotenv import load_dotenv
 from utils import (
@@ -13,10 +12,10 @@ from utils import (
     get_conversation_history
 )
 
-# --- 환경 변수 및 Gemini API 설정 ---
-load_dotenv()
-GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
-genai.configure(api_key=GOOGLE_API_KEY)
+# # --- 환경 변수 및 Gemini API 설정 ---
+# load_dotenv()
+# GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+# genai.configure(api_key=GOOGLE_API_KEY)
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

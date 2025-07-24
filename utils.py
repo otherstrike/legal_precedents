@@ -400,7 +400,7 @@ def run_parallel_agents(court_cases, tax_cases, preprocessed_data, user_query, c
         tax_cases_chunks = preprocessed_data["tax_chunks"]
         
         # ThreadPoolExecutor로 병렬 처리
-        with ThreadPoolExecutor(max_workers=6) as executor:  # 에이전트 수 증가로 max_workers 조정
+        with ThreadPoolExecutor(max_workers=2) as executor:  # 에이전트 수 증가로 max_workers 조정
             # Agent 1-2: 판례 검색 (2개 청크)
             court_agent_futures = []
             for i, chunk in enumerate(court_cases_chunks, start=1):
